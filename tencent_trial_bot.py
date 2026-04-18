@@ -73,12 +73,13 @@ class Config:
             "target_time": "23:00",  # Target time in HH:MM format (WIB)
             "timezone": "Asia/Jakarta",
             "retry_interval": 30,    # Seconds between retries if failed
-            "max_retries": 3,        # Max retry attempts
-            "pre_refresh_seconds": 120,  # Start refreshing N seconds before target time
+            "max_retries": 10,       # Max retry attempts
+            "pre_refresh_seconds": 180,  # Start refreshing N seconds before target time
         },
         "trial": {
-            "target_spec": "2核2G3M",  # Target spec to claim (partial match)
-            "page_url": "https://cloud.tencent.com/act/pro/free",
+            "page_url": "https://www.tencentcloud.com/act/pro/FreeTier",
+            "target_spec": "2核2G3M",  # Target spec to claim
+            "region": "ap-singapore",  # Target region (optional)
         },
         "telegram": {
             "enabled": False,
@@ -98,12 +99,10 @@ class Config:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                 logger.info(f"Loaded config from {self.config_path}")
-                # Merge with defaults
                 return self._merge_config(config)
             except Exception as e:
                 logger.warning(f"Failed to load config: {e}, using defaults")
         
-        # Create default config
         self._save_config(self.DEFAULT_CONFIG)
         logger.info(f"Created default config at {self.config_path}")
         logger.info("Please edit config.json with your Tencent account credentials!")
@@ -151,7 +150,6 @@ class TencentTrialBot:
         """Setup Chrome driver"""
         chrome_options = Options()
         
-        # Chrome options for Windows
         if self.config.get('chromedriver.headless', False):
             chrome_options.add_argument('--headless=new')
         
@@ -162,8 +160,6 @@ class TencentTrialBot:
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        # User agent
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
         driver_path = self.config.get('chromedriver.path')
@@ -173,16 +169,10 @@ class TencentTrialBot:
                 service = Service(executable_path=driver_path)
                 self.driver = webdriver.Chrome(service=service, options=chrome_options)
             else:
-                # Use webdriver-manager or just create without path
                 self.driver = webdriver.Chrome(options=chrome_options)
             
-            # Anti-detection
             self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                'source': '''
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
-                    })
-                '''
+                'source': 'Object.defineProperty(navigator, "webdriver", {get: () => undefined})'
             })
             
             logger.info("Chrome driver initialized successfully")
@@ -190,20 +180,18 @@ class TencentTrialBot:
             
         except WebDriverException as e:
             logger.error(f"Failed to initialize Chrome driver: {e}")
-            logger.error("Please ensure Chrome is installed and chromedriver is available")
             return False
     
     def wait_for_login(self, timeout: int = 300) -> bool:
-        """Wait for user to login manually (if not using credentials)"""
+        """Wait for user to login manually"""
         logger.info("Waiting for login... Please login to your Tencent Cloud account")
         logger.info(f"Will wait up to {timeout} seconds...")
         
         wait = WebDriverWait(self.driver, timeout)
         try:
-            # Wait for console to appear (indicates logged in)
             wait.until(lambda d: 'console' in d.current_url.lower() or 
-                               'control' in d.current_url.lower() or
-                               'cvm' in d.current_url.lower())
+                               'console' in d.current_url.lower() or
+                               'FreeTier' in d.current_url)
             logger.info("Login detected!")
             return True
         except TimeoutException:
@@ -211,7 +199,7 @@ class TencentTrialBot:
             return False
     
     def login(self) -> bool:
-        """Attempt to login with credentials (if provided)"""
+        """Attempt to login with credentials"""
         username = self.config.get('tencent.username')
         password = self.config.get('tencent.password')
         
@@ -220,209 +208,281 @@ class TencentTrialBot:
             return False
         
         try:
-            # Go to login page
             self.driver.get("https://cloud.tencent.com/login")
-            time.sleep(2)
+            time.sleep(3)
             
-            # Select login method
             login_method = self.config.get('tencent.login_method', 'phone')
             
             if login_method == 'phone':
-                # Click phone tab
-                phone_tab = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//span[contains(text(), '手机号')]"))
-                )
-                phone_tab.click()
-                time.sleep(1)
+                try:
+                    phone_tab = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, "//span[contains(text(), '手机号')]"))
+                    )
+                    phone_tab.click()
+                    time.sleep(1)
+                except:
+                    pass
                 
-                # Enter phone number
                 phone_input = self.driver.find_element(By.ID, "username")
                 phone_input.send_keys(username)
             else:
-                # Email login
                 email_input = self.driver.find_element(By.ID, "username")
                 email_input.send_keys(username)
             
-            # Enter password
             password_input = self.driver.find_element(By.ID, "password")
             password_input.send_keys(password)
             
-            # Click login button
             login_btn = self.driver.find_element(By.XPATH, "//button[@type='submit']")
             login_btn.click()
             
-            time.sleep(3)
+            time.sleep(5)
             
-            # Check if login successful
             if 'console' in self.driver.current_url.lower():
                 logger.info("Login successful!")
                 return True
-            else:
-                logger.warning("Login may have failed, will continue anyway")
-                return False
-                
+            
+            return False
+            
         except Exception as e:
             logger.warning(f"Auto-login failed: {e}")
             return False
     
-    def navigate_to_trial_page(self) -> bool:
-        """Navigate to the free trial page"""
+    def navigate_to_freetier(self) -> bool:
+        """Navigate to FreeTier page"""
         try:
-            url = self.config.get('trial.page_url', 'https://cloud.tencent.com/act/pro/free')
+            url = self.config.get('trial.page_url', 'https://www.tencentcloud.com/act/pro/FreeTier')
             logger.info(f"Navigating to {url}")
             self.driver.get(url)
-            time.sleep(3)
+            time.sleep(5)
             
-            # Wait for page to load
-            WebDriverWait(self.driver, 15).until(
+            WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             
-            logger.info("Trial page loaded")
+            logger.info("FreeTier page loaded")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to navigate to trial page: {e}")
+            logger.error(f"Failed to navigate to FreeTier page: {e}")
             return False
     
-    def find_and_click_trial_button(self) -> bool:
-        """Find the trial button and click it"""
+    def click_get_started(self) -> bool:
+        """Click Get Started button"""
         try:
-            # Find trial cards
-            trial_cards = self.driver.find_elements(By.XPATH, 
-                "//div[contains(@class, 'trial-card') or contains(@class, 'product-card')]")
+            logger.info("Looking for Get Started button...")
+            time.sleep(2)
             
-            target_spec = self.config.get('trial.target_spec', '2核2G3M')
-            logger.info(f"Looking for trial with spec: {target_spec}")
+            # Try multiple selectors for Get Started
+            selectors = [
+                "//button[contains(text(), 'Get Started')]",
+                "//button[contains(text(), '立即试用')]",
+                "//button[contains(text(), '开始使用')]",
+                "//a[contains(text(), 'Get Started')]",
+                "//span[contains(text(), 'Get Started')]",
+                "//div[contains(text(), 'Get Started')]",
+            ]
             
-            for card in trial_cards:
+            for selector in selectors:
                 try:
-                    card_text = card.text
-                    if target_spec in card_text:
-                        logger.info(f"Found matching card: {card_text[:200]}")
-                        
-                        # Find the 试用 (try) button
-                        buttons = card.find_elements(By.XPATH, 
-                            ".//button[contains(text(), '试用') or contains(text(), '立即试用')]")
-                        
-                        for btn in buttons:
-                            try:
-                                # Scroll to button
-                                self.driver.execute_script("arguments[0].scrollIntoView(true);", btn)
-                                time.sleep(0.5)
-                                
-                                # Check if button is enabled
-                                btn_text = btn.text
-                                if '已' in btn_text or '领取' in btn_text:
-                                    logger.info(f"Button text: {btn_text}")
-                                
-                                # Click the button
-                                btn.click()
-                                logger.info(f"Clicked trial button: {btn_text}")
-                                time.sleep(2)
-                                
-                                # Check for success modal or message
-                                return self.check_trial_result()
-                                
-                            except ElementClickInterceptedException:
-                                logger.warning("Button click intercepted, trying JavaScript click")
-                                self.driver.execute_script("arguments[0].click();", btn)
-                                time.sleep(2)
-                                return self.check_trial_result()
-                                
-                except Exception as e:
-                    logger.debug(f"Error processing card: {e}")
-                    continue
-            
-            # Try alternative method - find all buttons with 试用
-            logger.info("Trying alternative button search...")
-            all_buttons = self.driver.find_elements(By.XPATH, 
-                "//button[contains(text(), '试用') and not(contains(text(), '教程'))]")
-            
-            for btn in all_buttons:
-                try:
-                    btn_text = btn.text
-                    if target_spec in btn_text or '轻量' in btn_text or '服务器' in btn_text:
-                        logger.info(f"Found button: {btn_text}")
-                        self.driver.execute_script("arguments[0].click();", btn)
-                        time.sleep(2)
-                        return self.check_trial_result()
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    for elem in elements:
+                        if elem.is_displayed():
+                            logger.info(f"Found Get Started button: {elem.text}")
+                            self.driver.execute_script("arguments[0].scrollIntoView(true);", elem)
+                            time.sleep(0.5)
+                            self.driver.execute_script("arguments[0].click();", elem)
+                            time.sleep(3)
+                            logger.info("Clicked Get Started")
+                            return True
                 except:
                     continue
             
-            logger.warning("No trial button found with target spec")
+            # Try to find any prominent button
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                try:
+                    text = btn.text.lower()
+                    if 'get start' in text or '试用' in text or '开始' in text:
+                        logger.info(f"Found button: {btn.text}")
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        time.sleep(3)
+                        return True
+                except:
+                    continue
+            
+            logger.warning("Get Started button not found")
             return False
             
         except Exception as e:
-            logger.error(f"Error finding trial button: {e}")
+            logger.error(f"Error clicking Get Started: {e}")
             return False
     
-    def check_trial_result(self) -> bool:
-        """Check if trial claim was successful"""
+    def create_vps(self) -> bool:
+        """Create VPS instance"""
         try:
-            time.sleep(2)
+            logger.info("Creating VPS...")
+            time.sleep(3)
             
-            # Check for success indicators
+            target_spec = self.config.get('trial.target_spec', '2核2G3M')
+            logger.info(f"Looking for spec: {target_spec}")
+            
+            # Wait for page to load
+            time.sleep(5)
+            
+            # Find and click the target spec card
+            # Try to find cards containing the target spec
+            cards = self.driver.find_elements(By.XPATH, 
+                "//div[contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'product')]")
+            
+            for card in cards:
+                try:
+                    text = card.text
+                    if target_spec in text:
+                        logger.info(f"Found matching spec card")
+                        
+                        # Find and click the button in this card
+                        buttons = card.find_elements(By.TAG_NAME, "button")
+                        for btn in buttons:
+                            btn_text = btn.text
+                            if 'Try' in btn_text or '试用' in btn_text or 'Create' in btn_text or '购买' in btn_text:
+                                logger.info(f"Clicking: {btn_text}")
+                                self.driver.execute_script("arguments[0].click();", btn)
+                                time.sleep(3)
+                                return self.handle_create_flow()
+                except Exception as e:
+                    logger.debug(f"Card error: {e}")
+                    continue
+            
+            # Alternative: Find all buttons with target spec text
+            logger.info("Trying alternative search...")
+            xpath_buttons = [
+                f"//button[contains(text(), '{target_spec}')]",
+                f"//span[contains(text(), '{target_spec}')]",
+                f"//div[contains(text(), '{target_spec}')]"
+            ]
+            
+            for xpath in xpath_buttons:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, xpath)
+                    for elem in elements:
+                        try:
+                            parent = elem.find_element(By.XPATH, "./..")
+                            buttons = parent.find_elements(By.TAG_NAME, "button")
+                            for btn in buttons:
+                                logger.info(f"Found related button: {btn.text}")
+                                self.driver.execute_script("arguments[0].click();", btn)
+                                time.sleep(3)
+                                return self.handle_create_flow()
+                        except:
+                            continue
+                except:
+                    continue
+            
+            logger.warning("Could not find VPS creation option")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error creating VPS: {e}")
+            return False
+    
+    def handle_create_flow(self) -> bool:
+        """Handle the VPS creation flow"""
+        try:
+            logger.info("Handling create flow...")
+            time.sleep(5)
+            
+            # Click Continue or Next buttons
+            next_buttons = [
+                "Continue", "下一步", "Next", "确认", "Create", "立即创建",
+                "Submit", "提交", "Purchase", "购买"
+            ]
+            
+            for btn_text in next_buttons:
+                try:
+                    buttons = self.driver.find_elements(By.XPATH, 
+                        f"//button[contains(text(), '{btn_text}')]")
+                    for btn in buttons:
+                        if btn.is_displayed():
+                            logger.info(f"Clicking: {btn_text}")
+                            self.driver.execute_script("arguments[0].click();", btn)
+                            time.sleep(3)
+                except:
+                    continue
+            
+            # Check for success
+            return self.check_creation_result()
+            
+        except Exception as e:
+            logger.error(f"Error in create flow: {e}")
+            return False
+    
+    def check_creation_result(self) -> bool:
+        """Check if VPS creation was successful"""
+        try:
+            time.sleep(5)
             page_source = self.driver.page_source
             
             success_indicators = [
-                '申请成功',
-                '领取成功', 
-                '创建成功',
-                '已开通',
-                '立即前往'
+                'Created', '创建成功', '申请成功', '已开通', 
+                'success', 'Complete', '完成', '已创建'
             ]
             
             for indicator in success_indicators:
                 if indicator in page_source:
-                    logger.info(f"SUCCESS! Trial claim confirmed: {indicator}")
+                    logger.info(f"SUCCESS! VPS Created: {indicator}")
                     self.success = True
-                    self._send_notification("Tencent Cloud Trial Claimed Successfully!")
+                    self._send_notification("Tencent Cloud VPS Created Successfully!")
                     return True
             
-            # Check for error messages
-            error_indicators = [
-                '已领取',
-                '已被领取',
-                '已抢光',
-                '名额已满',
-                '来晚了'
-            ]
+            # Check URL
+            current_url = self.driver.current_url.lower()
+            if 'success' in current_url or 'complete' in current_url or 'created' in current_url:
+                logger.info("SUCCESS! Appears to be on success page")
+                self.success = True
+                return True
             
-            for indicator in error_indicators:
-                if indicator in page_source:
-                    logger.warning(f"Trial claim failed: {indicator}")
-                    return False
-            
-            # Check current URL
-            if 'success' in self.driver.current_url.lower() or 'result' in self.driver.current_url.lower():
-                logger.info("Appears to be on success page")
+            # Check if we have an instance running
+            if 'console' in current_url and 'instance' in current_url:
+                logger.info("SUCCESS! On instance console page")
                 self.success = True
                 return True
             
             return False
             
         except Exception as e:
-            logger.error(f"Error checking trial result: {e}")
+            logger.error(f"Error checking result: {e}")
             return False
     
-    def retry_claim(self, max_retries: int = 3) -> bool:
-        """Retry claiming trial multiple times"""
+    def retry_all(self, max_retries: int = 10) -> bool:
+        """Retry entire flow multiple times"""
         for attempt in range(1, max_retries + 1):
-            logger.info(f"Attempt {attempt}/{max_retries}")
+            logger.info(f"=== Attempt {attempt}/{max_retries} ===")
             
-            if self.find_and_click_trial_button():
+            # Go back to FreeTier page
+            if not self.navigate_to_freetier():
+                logger.warning("Failed to load FreeTier page")
+                time.sleep(5)
+                continue
+            
+            # Click Get Started
+            if not self.click_get_started():
+                logger.warning("Failed to click Get Started")
+                time.sleep(5)
+                continue
+            
+            # Create VPS
+            if self.create_vps():
                 return True
             
-            if attempt < max_retries:
-                logger.info("Retrying in 5 seconds...")
-                time.sleep(5)
-                self.navigate_to_trial_page()
+            # Wait before retry
+            wait_time = 10 if attempt < 5 else 30
+            logger.info(f"Retrying in {wait_time} seconds...")
+            time.sleep(wait_time)
         
         return False
     
     def _send_notification(self, message: str):
-        """Send notification via Telegram (if configured)"""
+        """Send notification via Telegram"""
         if not self.config.get('telegram.enabled', False):
             return
             
@@ -437,7 +497,7 @@ class TencentTrialBot:
             requests.post(url, data=data, timeout=10)
             logger.info("Telegram notification sent")
         except Exception as e:
-            logger.warning(f"Failed to send Telegram notification: {e}")
+            logger.warning(f"Failed to send notification: {e}")
     
     def run(self, immediate: bool = False):
         """Main run loop"""
@@ -445,19 +505,17 @@ class TencentTrialBot:
         logger.info("Tencent Cloud Trial Bot Started")
         logger.info("=" * 50)
         
-        # Setup driver
         if not self.setup_driver():
             return
         
         try:
-            # Navigate to trial page
-            if not self.navigate_to_trial_page():
-                logger.error("Failed to navigate to trial page")
+            # Navigate to FreeTier
+            if not self.navigate_to_freetier():
+                logger.error("Failed to navigate to FreeTier")
                 return
             
             # Try to login if credentials provided
             if not self.login():
-                # Wait for manual login
                 if not self.wait_for_login():
                     logger.error("Login failed/timeout")
                     return
@@ -466,57 +524,59 @@ class TencentTrialBot:
             if not immediate:
                 self.wait_for_target_time()
             
-            # Refresh page right before target time
-            logger.info("Refreshing trial page...")
-            self.navigate_to_trial_page()
-            time.sleep(2)
+            # Refresh page
+            logger.info("Refreshing page and starting creation...")
+            self.navigate_to_freetier()
+            time.sleep(3)
             
-            # Try to claim
-            if self.retry_claim(self.config.get('scheduler.max_retries', 3)):
+            # Click Get Started
+            self.click_get_started()
+            time.sleep(3)
+            
+            # Create VPS
+            if self.retry_all(self.config.get('scheduler.max_retries', 10)):
                 logger.info("=" * 50)
-                logger.info("TRIAL CLAIM SUCCESS!")
+                logger.info("VPS CREATION SUCCESS!")
                 logger.info("=" * 50)
             else:
-                logger.warning("Trial claim failed - all attempts exhausted")
+                logger.warning("VPS creation failed - all attempts exhausted")
                 
         except KeyboardInterrupt:
             logger.info("Bot interrupted by user")
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             self.cleanup()
     
     def wait_for_target_time(self):
-        """Wait until target time (or slightly before)"""
+        """Wait until target time"""
         target_time = self.config.get('scheduler.target_time', '23:00')
-        pre_refresh = self.config.get('scheduler.pre_refresh_seconds', 120)
+        pre_refresh = self.config.get('scheduler.pre_refresh_seconds', 180)
         
         target_hour, target_minute = map(int, target_time.split(':'))
         
         while self.running:
             now = datetime.now()
             
-            # Calculate target datetime
             target_dt = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
             
-            # If target time has passed today, target tomorrow
             if target_dt <= now:
                 target_dt += timedelta(days=1)
             
-            # Start refreshing N seconds before target
             refresh_time = target_dt - timedelta(seconds=pre_refresh)
             
             if now >= refresh_time:
-                logger.info(f"Reached refresh time, will refresh page shortly...")
+                logger.info(f"Reached refresh time, starting...")
                 break
             
-            # Calculate wait time
             wait_seconds = (refresh_time - now).total_seconds()
             hours = int(wait_seconds // 3600)
             minutes = int((wait_seconds % 3600) // 60)
             
-            logger.info(f"Waiting for target time {target_time}... ({hours}h {minutes}m remaining)")
-            time.sleep(min(60, wait_seconds))  # Sleep max 60 seconds
+            logger.info(f"Waiting for {target_time}... ({hours}h {minutes}m remaining)")
+            time.sleep(min(60, wait_seconds))
     
     def cleanup(self):
         """Clean up resources"""
@@ -530,24 +590,21 @@ class TencentTrialBot:
 # ==================== MAIN ====================
 
 def main():
-    parser = argparse.ArgumentParser(description='Tencent Cloud Free Trial Auto-Claim Bot')
-    parser.add_argument('--now', action='store_true', help='Run immediately instead of waiting for scheduled time')
-    parser.add_argument('--time', type=str, help='Target time in HH:MM format (default: 23:00)')
+    parser = argparse.ArgumentParser(description='Tencent Cloud Free Trial Bot')
+    parser.add_argument('--now', action='store_true', help='Run immediately')
+    parser.add_argument('--time', type=str, help='Target time in HH:MM format')
     parser.add_argument('--config', type=str, help='Path to config file')
-    parser.add_argument('--headless', action='store_true', help='Run Chrome in headless mode')
+    parser.add_argument('--headless', action='store_true', help='Run in headless mode')
     
     args = parser.parse_args()
     
-    # Load config
     config = Config(args.config)
     
-    # Override config with CLI args
     if args.time:
         config.config['scheduler']['target_time'] = args.time
     if args.headless:
         config.config['chromedriver']['headless'] = True
     
-    # Create and run bot
     bot = TencentTrialBot(config)
     bot.run(immediate=args.now)
 

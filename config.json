@@ -13,12 +13,13 @@
     "target_time": "23:00",
     "timezone": "Asia/Jakarta",
     "retry_interval": 30,
-    "max_retries": 3,
-    "pre_refresh_seconds": 120
+    "max_retries": 10,
+    "pre_refresh_seconds": 180
   },
   "trial": {
+    "page_url": "https://www.tencentcloud.com/act/pro/FreeTier",
     "target_spec": "2核2G3M",
-    "page_url": "https://cloud.tencent.com/act/pro/free"
+    "region": "ap-singapore"
   },
   "telegram": {
     "enabled": false,
