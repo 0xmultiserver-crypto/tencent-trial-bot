@@ -1,0 +1,28 @@
+{
+  "tencent": {
+    "username": "YOUR_PHONE_NUMBER",
+    "password": "YOUR_PASSWORD",
+    "login_method": "phone"
+  },
+  "chromedriver": {
+    "path": "",
+    "headless": false,
+    "user_data_dir": ""
+  },
+  "scheduler": {
+    "target_time": "23:00",
+    "timezone": "Asia/Jakarta",
+    "retry_interval": 30,
+    "max_retries": 3,
+    "pre_refresh_seconds": 120
+  },
+  "trial": {
+    "target_spec": "2核2G3M",
+    "page_url": "https://cloud.tencent.com/act/pro/free"
+  },
+  "telegram": {
+    "enabled": false,
+    "bot_token": "",
+    "chat_id": ""
+  }
+}
